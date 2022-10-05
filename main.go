@@ -54,28 +54,6 @@ type division_type struct {
 }
 
 var (
-	// TODO: remove the following struct
-	// Structure:
-	// Key      -> Array
-	// Division -> Divisions permissable for swap_rules
-	swap_rules = map[string][]string{
-		// U11 a-c -> U13 b-c
-		"U11 A": {"U11 A", "U11 B", "U11 C", "U13 B", "U13 C"},
-		"U11 B": {"U11 A", "U11 B", "U11 C", "U13 B", "U13 C"},
-		"U11 C": {"U11 A", "U11 B", "U11 C", "U13 B", "U13 C"},
-		// U13 a -> U15 a-b
-		"U13 A": {"U13 A", "U15 A", "U15 B"},
-		// U13 b-c -> U11 a-c
-		"U13 B": {"U13 B", "U13 C", "U11 A", "U11 B", "U11 C"},
-		"U13 C": {"U13 B", "U13 C", "U11 A", "U11 B", "U11 C"},
-		// U15 a-b -> U13 a
-		"U15 A": {"U15 A", "U15 B", "U13 A", "U18 A", "U18 B"},
-		"U15 B": {"U15 A", "U15 B", "U13 A", "U18 A", "U18 B"},
-		// U18 a-b -> U15 a-b
-		"U18 A": {"U15 A", "U15 B", "U18 A", "U18 B"},
-		"U18 B": {"U15 A", "U15 B", "U18 A", "U18 B"},
-	}
-
 	// Contains division names and rules for swapping games
 	divisions = []division_type{
 		{"U11 A", "U11.*A", "U11 A -> U11 A-C, U13 B-C", "U11.*[A-C]|U13.*[B-C]"},

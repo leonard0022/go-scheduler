@@ -21,7 +21,7 @@ import (
  Input information:
   1) team division (i.e. Novice A, Atom C, etc.)
     - user selected from static list
-  2) swappable divisions 
+  2) swappable divisions
     - static data selected based on team division
   3) date(s) requiring swaps (i.e. 2020-03-01)
     - user entered (free format)
@@ -85,9 +85,9 @@ var (
 )
 
 /*
- Normalize everything to uppercase. Check to see if the string is already in
- the list. If so then return the original list; otherwise, append the new
- string and return the updated list.
+Normalize everything to uppercase. Check to see if the string is already in
+the list. If so then return the original list; otherwise, append the new
+string and return the updated list.
 */
 func addUnique(list []string, str string) []string {
 	tStr := strings.ToUpper(str)
@@ -243,7 +243,8 @@ func main() {
 	fmt.Print("Enter the number > ")
 	fmt.Println("Your team: ", team)
 
-	var potentialGames[][]string
+	// todo - uncomment when I figure out what this is
+	//var potentialGames[][]string
 
 	// 1) find all teams (division + team name) playing on the given date
 	// 2) remove your opponent from the list of teams
@@ -251,7 +252,8 @@ func main() {
 	for i := range records {
 		result, err := regexp.MatchString(date, records[i][2])
 		if result {
-
+			// todo This shouldn't be a fatal error
+			log.Fatal(err)
 		}
 	}
 }

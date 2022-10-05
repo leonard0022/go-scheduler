@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -56,11 +57,65 @@ type division_type struct {
 var (
 	// Contains division names and rules for swapping games
 	divisions = []division_type{
+		// U11
 		{"U11 A", "U11.*A", "U11 A -> U11 A-C, U13 B-C", "U11.*[A-C]|U13.*[B-C]"},
 		{"U11 B", "U11.*B", "U11 B -> U11 A-C, U13 B-C", "U11.*[A-C]|U13.*[B-C]"},
 		{"U11 C", "U11.*C", "U11 C -> U11 A-C, U13 B-C", "U11.*[A-C]|U13.*[B-C]"},
+		// U13
+		{"U13 A", "U13.*A", "U13 A -> U15 A-B", "U13.*[A]|U15.*[A-B]"},
+		{"U13 B", "U13.*B", "U13 B -> U11 A-C, U13 B-C", "U13.*[B-C]|U11.*[A-C]"},
+		{"U13 C", "U13.*C", "U13 C -> U11 A-C, U13 B-C", "U13.*[B-C]|U11.*[A-C]"},
+		// U15
+		{"U15 A", "U15.*A", "U15 A -> U15 A-B, U18 A-B", "U15.*[A-B]|U18.*[A-B]"},
+		{"U15 B", "U15.*B", "U15 B -> U15 A-B, U18 A-B", "U15.*[A-B]|U18.*[A-B]"},
+		// U18
+		{"U18 A", "U18.*A", "U18 A -> U15 A-B, U18 A-B", "U15.*[A-B]|U18.*[A-B]"},
+		{"U18 B", "U18.*B", "U18 B -> U15 A-B, U18 A-B", "U15.*[A-B]|U18.*[A-B]"},
 	}
 )
+
+/*
+Download GHA Schedule to local
+
+This is used to download the schedule from the Total Team Management
+website. To get the URL (Note: done with Firefox)
+ 1. Navigate to the TTM website schedules
+ 2. Select 'All Divisions'
+ 3. Enable Developer Tools: Ctrl + Shift + I
+ 4. In Developer Tools, select Network tab
+ 5. Click the TTM Export... button and choose CSV format
+ 6. Close the popup window
+ 7. In Developer Tools right click the new File value
+ 8. Select Copy Value / Copy URL
+*/
+func downloadSchedule(filepath string) (err error) {
+	// url to the full schedule
+	var url string = "https://ttmwebservices.ca/schedules/index.php?" +
+		"pgid=dnl-11-010&dtype=CSV&AID=HEO&JID=district9&" +
+		"pcode=15679761017023700001&ddtype=&stype=2&atype="
+
+	// Create the file
+	out, err := os.Create(filepath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	// Get the data
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Writer the body to file
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
 
 /*
 Normalize everything to uppercase. Check to see if the string is already in
@@ -81,6 +136,14 @@ func addUnique(list []string, str string) []string {
 }
 
 func main() {
+	schedule := "./schedule.csv"
+
+	// Download schedule
+	// todo clean up downloaded file when done
+	err := downloadSchedule(schedule)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Get team division
 	fmt.Println("Select your division: ")
@@ -108,7 +171,7 @@ func main() {
 	*/
 
 	fmt.Print("Enter the number > ")
-	_, err := fmt.Scanln(&dIdx)
+	_, err = fmt.Scanln(&dIdx)
 	if err != nil {
 		log.Fatal(err)
 	}

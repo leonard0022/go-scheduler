@@ -10,7 +10,7 @@ import (
 	"io"
 	"log"
 	"os"
-	"sort"
+	"regexp"
 	"strings"
 )
 
@@ -20,47 +20,77 @@ import (
 
  Input information:
   1) team division (i.e. Novice A, Atom C, etc.)
-  2) team name (i.e. GCTCOUGARS1)
+    - user selected from static list
+  2) swappable divisions 
+    - static data selected based on team division
   3) date(s) requiring swaps (i.e. 2020-03-01)
+    - user entered (free format)
+    - will eliminate all teams playing on that date
+  4) schedule (want to get this from online)
+    - csv format: division, game, date, time, location, home, away, +extra
+  5) teams to eliminate
+    - generated from schedule based on: date, swappable division
+  6) team name (i.e. GCTCOUGARS1)
+    - user select from list generate from schedule
+  7) email addresses (want to get this from online)
 
  General algorithm:
-  1) eliminate incompatible divisions
-  2) eliminate game days <- need division + team name
+  1) eliminate played games
+  2) eliminate incompatible divisions
+  3) eliminate game days for teams in game being swapped <- need division + team name
+  4) elimite teams playing on the day of the game you want to swap
 
-  Game switch alternatives:
-  Atom A-C <-> Peewee B-C
-  Peewee A <-> Bantam A-B
-  Bantam A-B <-> Midget A-B
+ Game switch alternatives:
+  U11 A-C <-> U13 B-C
+  U13 A <-> U15 A-B
+  U15 A-B <-> U18 A-B
 */
 
+type division_type struct {
+	name       string // name of the division
+	nameRegex  string // regex for matching division
+	swaps      string // description of swaps
+	swapsRegex string // regular expression for finding swaps
+}
+
 var (
-	swaps = map[string][]string{
-		// atom a-c -> peewee b-c
-		"atom a": {"atom a", "atom b", "atom c", "peewee b", "peewee c"},
-		"atom b": {"atom a", "atom b", "atom c", "peewee b", "peewee c"},
-		"atom c": {"atom a", "atom b", "atom c", "peewee b", "peewee c"},
-		// peewee a -> bantam a-b
-		"peewee a": {"peewee a", "bantam a", "bantam b"},
-		// peewee b-c -> atom a-c
-		"peewee b": {"peewee b", "peewee c", "atom a", "atom b", "atom c"},
-		"peewee c": {"peewee b", "peewee c", "atom a", "atom b", "atom c"},
-		// bantam a-b -> peewee a
-		"bantam a": {"bantam a", "bantam b", "peewee a", "midget a", "midget b"},
-		"bantam b": {"bantam a", "bantam b", "peewee a", "midget a", "midget b"},
-		// midget a-b -> bantan a-b
-		"midget a": {"bantam a", "bantam b", "midget a", "midget b"},
-		"midget b": {"bantam a", "bantam b", "midget a", "midget b"},
+	// TODO: remove the following struct
+	// Structure:
+	// Key      -> Array
+	// Division -> Divisions permissable for swap_rules
+	swap_rules = map[string][]string{
+		// U11 a-c -> U13 b-c
+		"U11 A": {"U11 A", "U11 B", "U11 C", "U13 B", "U13 C"},
+		"U11 B": {"U11 A", "U11 B", "U11 C", "U13 B", "U13 C"},
+		"U11 C": {"U11 A", "U11 B", "U11 C", "U13 B", "U13 C"},
+		// U13 a -> U15 a-b
+		"U13 A": {"U13 A", "U15 A", "U15 B"},
+		// U13 b-c -> U11 a-c
+		"U13 B": {"U13 B", "U13 C", "U11 A", "U11 B", "U11 C"},
+		"U13 C": {"U13 B", "U13 C", "U11 A", "U11 B", "U11 C"},
+		// U15 a-b -> U13 a
+		"U15 A": {"U15 A", "U15 B", "U13 A", "U18 A", "U18 B"},
+		"U15 B": {"U15 A", "U15 B", "U13 A", "U18 A", "U18 B"},
+		// U18 a-b -> U15 a-b
+		"U18 A": {"U15 A", "U15 B", "U18 A", "U18 B"},
+		"U18 B": {"U15 A", "U15 B", "U18 A", "U18 B"},
+	}
+
+	// Contains division names and rules for swapping games
+	divisions = []division_type{
+		{"U11 A", "U11.*A", "U11 A -> U11 A-C, U13 B-C", "U11.*[A-C]|U13.*[B-C]"},
+		{"U11 B", "U11.*B", "U11 B -> U11 A-C, U13 B-C", "U11.*[A-C]|U13.*[B-C]"},
+		{"U11 C", "U11.*C", "U11 C -> U11 A-C, U13 B-C", "U11.*[A-C]|U13.*[B-C]"},
 	}
 )
 
 /*
- Use everything in the string up to the first space as the team name. Normalize
- everything to uppercase. Check to see if the string is already in the list. If
- so then return the original list; otherwise, append the new string and return
- the updated list.
+ Normalize everything to uppercase. Check to see if the string is already in
+ the list. If so then return the original list; otherwise, append the new
+ string and return the updated list.
 */
 func addUnique(list []string, str string) []string {
-	tStr := strings.ToUpper(strings.Fields(str)[0])
+	tStr := strings.ToUpper(str)
 
 	for _, v := range list {
 		if strings.ToUpper(v) == tStr {
@@ -74,44 +104,51 @@ func addUnique(list []string, str string) []string {
 
 func main() {
 
-	/*
-	 Expecting CSV records containing:
-	*/
-	type Record struct {
-		division string // index 0
-		game     string // index 1
-		date     string // index 2
-		time     string // index 3
-		location string // index 4
-		team1    string // index 5 - can contain score: (1)
-		team2    string // index 6 - can contain score: (1)
-	}
-
-	//--------------------------------------------------------------------------
 	// Get team division
-
-	// sort the keys
-	var keys []string
-	for k := range swaps {
-		keys = append(keys, k)
+	fmt.Println("Select your division: ")
+	dIdx := 0
+	for _, k := range divisions {
+		fmt.Printf(" %d - %s\n", dIdx, k.name)
+		dIdx++
 	}
-	sort.Strings(keys)
+
+	/* TODO - testing new format, remove this
+	// sort the divisions
+	var divisions []string
+	for k := range swap_rules {
+		divisions = append(divisions, k)
+	}
+	sort.Strings(divisions)
 
 	// prompt for team division
+	fmt.Println("Select your division: ")
 	idx := 0
-	for _, k := range keys {
-		fmt.Printf("%d - %s\n", idx, k)
+	for _, k := range divisions {
+		fmt.Printf(" %d - %s\n", idx, k)
 		idx++
 	}
+	*/
 
-	fmt.Print("Select division: ")
-	_, err := fmt.Scanln(&idx)
+	fmt.Print("Enter the number > ")
+	_, err := fmt.Scanln(&dIdx)
 	if err != nil {
 		log.Fatal(err)
 	}
-	division := keys[idx]
-	fmt.Println("Your division: ", division)
-	fmt.Println("Your potential swaps: ", swaps[division])
+	division := divisions[dIdx]
+	fmt.Println("Your division: ", division.name)
+	fmt.Println("Your potential swaps: ", division.swaps)
+
+	// Get the dates of the game swap
+	// TODO validate the date format the user entered
+	//      1. current or future date
+	//      2. month and day values are valid
+	var date string
+	fmt.Print("Enter date (i.e. YYYY-MM-DD)")
+	_, err = fmt.Scanln(&date)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Your date: ", date)
 
 	// prompt for filename
 	fName := "missing"
@@ -129,14 +166,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// read all lines from
+	// create a reader to read all lines from CSV file
 	reader := csv.NewReader(f)
 
 	// list of records
 	var records [][]string
 
 	// used to store the list of team names
-	var teams []string
+	var teamNames []string
+	var teamsToEliminate []string
 
 	// loop reading each record
 	for cnt := 1; ; {
@@ -152,55 +190,68 @@ func main() {
 			log.Fatal(err)
 		}
 
-		// check if entry is part of a division in which swaps are allowed
-		for _, v := range swaps[division] {
-			// extract names of teams in SAME division
-			if strings.HasPrefix(strings.ToLower(record[0]), division) {
-				for i := 5; i <= 6; i++ {
-					teams = addUnique(teams, record[i])
-				}
-			}
-
-			// store records from ALL COMPATIBLE divisions
-			if strings.HasPrefix(strings.ToLower(record[0]), v) {
-				records = append(records, record)
-				//fmt.Printf("%05d: %d: %s\n", cnt, len(record), record)
-				break
-			}
+		// Skip any games that already have a score entered
+		// Example: GLOUCESTER CENTRE COUGARS U15B1 (3)
+		result, err := regexp.MatchString(`.*\([0-9]+\).*`, record[6])
+		// TODO : add error handling
+		if result {
+			// fmt.Println("skipping: ", record)
+			continue
 		}
 
-		//fmt.Printf("%05d: %d: %s\n", cnt, len(record), record)
+		// look for games in divisions that match swap rules
+		result, err = regexp.MatchString(division.swapsRegex, record[0])
+		// TODO : add error handling
+		if result {
+			//fmt.Println("match: ", record)
+			records = append(records, record)
+		}
 
+		// look for teams in the same division
+		result, err = regexp.MatchString(division.nameRegex, record[0])
+		// TODO : add error handling
+		if result {
+			//fmt.Println("adding :", record[5])
+			//fmt.Println("adding :", record[6])
+			teamNames = addUnique(teamNames, record[5])
+			teamNames = addUnique(teamNames, record[6])
+		}
+
+		// Create a list of all teams playing on the date to be swapped
+		// These teams will be eliminated from potential matches
+		result, err = regexp.MatchString(date, record[2])
+		// TODO : add error handling
+		if result {
+			teamsToEliminate = addUnique(teamsToEliminate, record[5])
+			teamsToEliminate = addUnique(teamsToEliminate, record[6])
+		}
 		cnt++
 	}
 
 	// prompt for team
-	idx = 0
-	for _, k := range teams {
-		fmt.Printf("%d - %s\n", idx, k)
-		idx++
+	tIdx := 0
+	for _, k := range teamNames {
+		fmt.Printf(" %d - %s\n", tIdx, k)
+		tIdx++
 	}
 	fmt.Print("Select team: ")
-	_, err = fmt.Scanln(&idx)
+	_, err = fmt.Scanln(&tIdx)
 	if err != nil {
 		log.Fatal(err)
 	}
-	team := teams[idx]
+	team := teamNames[tIdx]
+	fmt.Print("Enter the number > ")
 	fmt.Println("Your team: ", team)
 
-	// Get the dates of the game swap
-	// todo validate the date format the user entered
-	//      1. current or future date
-	//      2. month and day values are valid
-	var date string
-	fmt.Print("Enter date (i.e. YYYY-MM-DD)")
-	_, err = fmt.Scanln(&date)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("Your date: ", date)
+	var potentialGames[][]string
 
 	// 1) find all teams (division + team name) playing on the given date
 	// 2) remove your opponent from the list of teams
 	// 3) eliminate all teams playing on the given date
+	for i := range records {
+		result, err := regexp.MatchString(date, records[i][2])
+		if result {
+
+		}
+	}
 }

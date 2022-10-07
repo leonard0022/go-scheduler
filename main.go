@@ -1,5 +1,8 @@
 /*
   Package for finding game swaps.
+
+  TODO Find out how to have a debug flag and debug statements
+  TODO Add graphical interface
 */
 
 package main
@@ -12,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -123,8 +127,12 @@ the list. If so then return the original list; otherwise, append the new
 string and return the updated list.
 */
 func addUnique(list []string, str string) []string {
-	tStr := strings.ToUpper(str)
+	// If scores have been added you need to cut the scores
+	// Example:  BLACKBURN STINGERS U15 B1 (1) -> BLACKBURN STINGERS U15 B1
+	before, _, _ := strings.Cut(str, " (")
+	tStr := strings.ToUpper(before)
 
+	//list[tStr] = true
 	for _, v := range list {
 		if strings.ToUpper(v) == tStr {
 			return list
@@ -136,39 +144,23 @@ func addUnique(list []string, str string) []string {
 }
 
 func main() {
+	// location to download schedule to
 	schedule := "./schedule.csv"
 
 	// Download schedule
-	// todo clean up downloaded file when done
+	// TODO clean up downloaded file when done
 	err := downloadSchedule(schedule)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Get team division
+	// Get team division from user
 	fmt.Println("Select your division: ")
 	dIdx := 0
 	for _, k := range divisions {
-		fmt.Printf(" %d - %s\n", dIdx, k.name)
+		fmt.Printf(" %2d - %s\n", dIdx, k.name)
 		dIdx++
 	}
-
-	/* TODO - testing new format, remove this
-	// sort the divisions
-	var divisions []string
-	for k := range swap_rules {
-		divisions = append(divisions, k)
-	}
-	sort.Strings(divisions)
-
-	// prompt for team division
-	fmt.Println("Select your division: ")
-	idx := 0
-	for _, k := range divisions {
-		fmt.Printf(" %d - %s\n", idx, k)
-		idx++
-	}
-	*/
 
 	fmt.Print("Enter the number > ")
 	_, err = fmt.Scanln(&dIdx)
@@ -184,98 +176,103 @@ func main() {
 	//      1. current or future date
 	//      2. month and day values are valid
 	var date string
-	fmt.Print("Enter date (i.e. YYYY-MM-DD)")
+	fmt.Print("Enter date to swap (i.e. YYYY-MM-DD): ")
 	_, err = fmt.Scanln(&date)
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println("Your date: ", date)
 
-	// prompt for filename
-	fName := "missing"
-	fmt.Print("Enter filename: ")
-	_, err = fmt.Scanln(&fName)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	// open file for reading
-	fmt.Println("opening file:", fName)
-	f, err := os.Open(fName)
-	defer f.Close()
+	f, err := os.Open(schedule)
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer f.Close()
 
 	// create a reader to read all lines from CSV file
 	reader := csv.NewReader(f)
 
-	// list of records
-	var records [][]string
+	// list of potentialMatches from the schedule file
+	var potentialMatches [][]string
 
 	// used to store the list of team names
-	var teamNames []string
-	var teamsToEliminate []string
+	var teamNames []string                       // Need? a list to present options to users
+	var teamsToEliminate = make(map[string]bool) // Map is better to do fast lookups and avoid iterating over a list
 
-	// loop reading each record
-	for cnt := 1; ; {
+	for line := 1; ; line++ {
+		// read each record from the file
 		record, err := reader.Read()
-
-		// stop at end of file
 		if err == io.EOF {
 			break
 		}
-
-		// exit if error found
 		if err != nil {
 			log.Fatal(err)
 		}
 
+		// Create a list of teams in the same division. This will be used
+		// later to prompt the user what their team is. Done before skipping
+		// games with scores because early season schedules may not have
+		// unplayed games for all teams. This maximizes the chances that all
+		// teams will be found.
+		result, err := regexp.MatchString(division.nameRegex, record[0])
+		if err != nil {
+			log.Fatal(err)
+		}
+		if result {
+			//fmt.Println(line, "add division team :", record[5])
+			//fmt.Println(line, "add division team :", record[6])
+			teamNames = addUnique(teamNames, record[5])
+			teamNames = addUnique(teamNames, record[6])
+		}
+
 		// Skip any games that already have a score entered
 		// Example: GLOUCESTER CENTRE COUGARS U15B1 (3)
-		result, err := regexp.MatchString(`.*\([0-9]+\).*`, record[6])
-		// TODO : add error handling
+		result, err = regexp.MatchString(`.*\([0-9]+\).*`, record[6])
+		if err != nil {
+			log.Fatal(err)
+		}
 		if result {
-			// fmt.Println("skipping: ", record)
+			//log.Println(line, "skipping: ", record)
 			continue
 		}
 
-		// look for games in divisions that match swap rules
+		// look for games in divisions that satisfy the swap rules
 		result, err = regexp.MatchString(division.swapsRegex, record[0])
-		// TODO : add error handling
-		if result {
-			//fmt.Println("match: ", record)
-			records = append(records, record)
+		if err != nil {
+			log.Fatal(err)
 		}
-
-		// look for teams in the same division
-		result, err = regexp.MatchString(division.nameRegex, record[0])
-		// TODO : add error handling
 		if result {
-			//fmt.Println("adding :", record[5])
-			//fmt.Println("adding :", record[6])
-			teamNames = addUnique(teamNames, record[5])
-			teamNames = addUnique(teamNames, record[6])
+			//fmt.Println(line, "match: ", record)
+			potentialMatches = append(potentialMatches, record)
 		}
 
 		// Create a list of all teams playing on the date to be swapped
 		// These teams will be eliminated from potential matches
 		result, err = regexp.MatchString(date, record[2])
-		// TODO : add error handling
+		if err != nil {
+			log.Fatal(err)
+		}
 		if result {
+			fmt.Println(line, "eliminate team: ", record[5])
+			fmt.Println(line, "eliminate team: ", record[6])
+			/* TODO Remove after testing
 			teamsToEliminate = addUnique(teamsToEliminate, record[5])
 			teamsToEliminate = addUnique(teamsToEliminate, record[6])
+			*/
+			teamsToEliminate[record[5]] = true
+			teamsToEliminate[record[6]] = true
 		}
-		cnt++
 	}
 
-	// prompt for team
+	// prompt for the user's team
+	sort.Strings(teamNames)
 	tIdx := 0
 	for _, k := range teamNames {
-		fmt.Printf(" %d - %s\n", tIdx, k)
+		fmt.Printf(" %2d - %s\n", tIdx, k)
 		tIdx++
 	}
-	fmt.Print("Select team: ")
+	fmt.Print("Select your team: ")
 	_, err = fmt.Scanln(&tIdx)
 	if err != nil {
 		log.Fatal(err)
@@ -284,17 +281,32 @@ func main() {
 	fmt.Print("Enter the number > ")
 	fmt.Println("Your team: ", team)
 
-	// todo - uncomment when I figure out what this is
-	//var potentialGames[][]string
+	var matches [][]string
 
 	// 1) find all teams (division + team name) playing on the given date
 	// 2) remove your opponent from the list of teams
 	// 3) eliminate all teams playing on the given date
-	for i := range records {
-		result, err := regexp.MatchString(date, records[i][2])
-		if result {
-			// todo This shouldn't be a fatal error
+	for i := range potentialMatches {
+		result, err := regexp.MatchString(date, potentialMatches[i][2])
+		if err != nil {
 			log.Fatal(err)
 		}
+		if result {
+			// skip games on the same day
+			continue
+		}
+
+		if teamsToEliminate[potentialMatches[i][5]] {
+			//fmt.Println("Eliminate: ", potentialMatches[i])
+			continue
+		}
+		if teamsToEliminate[potentialMatches[i][6]] {
+			//fmt.Println("Eliminate: ", potentialMatches[i])
+			continue
+		}
+
+		// No reason found to eliminate the game, add it to matches
+		fmt.Println("Match: ", potentialMatches[i])
+		matches = append(matches, potentialMatches[i])
 	}
 }

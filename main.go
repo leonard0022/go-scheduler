@@ -256,10 +256,6 @@ func main() {
 		if result {
 			fmt.Println(line, "eliminate team: ", record[5])
 			fmt.Println(line, "eliminate team: ", record[6])
-			/* TODO Remove after testing
-			teamsToEliminate = addUnique(teamsToEliminate, record[5])
-			teamsToEliminate = addUnique(teamsToEliminate, record[6])
-			*/
 			teamsToEliminate[record[5]] = true
 			teamsToEliminate[record[6]] = true
 		}

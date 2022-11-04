@@ -61,6 +61,10 @@ type division_type struct {
 var (
 	// Contains division names and rules for swapping games
 	divisions = []division_type{
+		// U9
+		{"U9 A", "U9.*A", "U9 A -> U9 A-C", "U9.*[A-C]"},
+		{"U9 B", "U9.*B", "U9 B -> U9 A-C", "U9.*[A-C]"},
+		{"U9 C", "U9.*C", "U9 C -> U9 A-C", "U9.*[A-C]"},
 		// U11
 		{"U11 A", "U11.*A", "U11 A -> U11 A-C, U13 B-C", "U11.*[A-C]|U13.*[B-C]"},
 		{"U11 B", "U11.*B", "U11 B -> U11 A-C, U13 B-C", "U11.*[A-C]|U13.*[B-C]"},
@@ -197,9 +201,9 @@ func main() {
 	var potentialMatches [][]string
 
 	// used to store the list of team names
-	var teamNames []string                       // Need? a list to present options to users
+	var teamNames []string // Need? a list to present options to users
+	var teamSchedule = make(map[string]map[string]bool)
 	var teamsToEliminate = make(map[string]bool) // Map is better to do fast lookups and avoid iterating over a list
-
 	for line := 1; ; line++ {
 		// read each record from the file
 		record, err := reader.Read()
@@ -210,31 +214,36 @@ func main() {
 			log.Fatal(err)
 		}
 
-		// Create a list of teams in the same division. This will be used
-		// later to prompt the user what their team is. Done before skipping
-		// games with scores because early season schedules may not have
-		// unplayed games for all teams. This maximizes the chances that all
-		// teams will be found.
-		result, err := regexp.MatchString(division.nameRegex, record[0])
-		if err != nil {
-			log.Fatal(err)
-		}
-		if result {
-			//fmt.Println(line, "add division team :", record[5])
-			//fmt.Println(line, "add division team :", record[6])
-			teamNames = addUnique(teamNames, record[5])
-			teamNames = addUnique(teamNames, record[6])
-		}
-
 		// Skip any games that already have a score entered
 		// Example: GLOUCESTER CENTRE COUGARS U15B1 (3)
-		result, err = regexp.MatchString(`.*\([0-9]+\).*`, record[6])
+		result, err := regexp.MatchString(`.*\([0-9]+\).*`, record[6])
 		if err != nil {
 			log.Fatal(err)
 		}
 		if result {
 			//log.Println(line, "skipping: ", record)
 			continue
+		}
+
+		// Create a list of teams in the same division. This will be used
+		// later to prompt the user what their team is. Done before skipping
+		// games with scores because early season schedules may not have
+		// unplayed games for all teams. This maximizes the chances that all
+		// teams will be found.
+		result, err = regexp.MatchString(division.nameRegex, record[0])
+		if err != nil {
+			log.Fatal(err)
+		}
+		if result {
+			//fmt.Println(line, "add division team :", record[5])
+			//fmt.Println(line, "add division team :", record[6])
+			for i := 5; i <= 6; i++ {
+				teamNames = addUnique(teamNames, record[i])
+				if teamSchedule[record[i]] == nil {
+					teamSchedule[record[i]] = make(map[string]bool)
+				}
+				teamSchedule[record[i]][record[2]] = true
+			}
 		}
 
 		// look for games in divisions that satisfy the swap rules
@@ -254,8 +263,8 @@ func main() {
 			log.Fatal(err)
 		}
 		if result {
-			fmt.Println(line, "eliminate team: ", record[5])
-			fmt.Println(line, "eliminate team: ", record[6])
+			//fmt.Println(line, "eliminate team: ", record[5])
+			//fmt.Println(line, "eliminate team: ", record[6])
 			teamsToEliminate[record[5]] = true
 			teamsToEliminate[record[6]] = true
 		}
@@ -277,11 +286,15 @@ func main() {
 	fmt.Print("Enter the number > ")
 	fmt.Println("Your team: ", team)
 
+	fmt.Println("Schedule:", teamSchedule[team])
 	var matches [][]string
+
+	// TODO eliminate dates when you are already playing
 
 	// 1) find all teams (division + team name) playing on the given date
 	// 2) remove your opponent from the list of teams
 	// 3) eliminate all teams playing on the given date
+	// 4) eliminate all dates that the team is playing on
 	for i := range potentialMatches {
 		result, err := regexp.MatchString(date, potentialMatches[i][2])
 		if err != nil {
@@ -289,6 +302,11 @@ func main() {
 		}
 		if result {
 			// skip games on the same day
+			continue
+		}
+
+		if teamSchedule[team][potentialMatches[i][2]] {
+			// skip days when the team is already playing
 			continue
 		}
 
@@ -302,7 +320,8 @@ func main() {
 		}
 
 		// No reason found to eliminate the game, add it to matches
-		fmt.Println("Match: ", potentialMatches[i])
+		fmt.Println(strings.Join(potentialMatches[i], ","))
+
 		matches = append(matches, potentialMatches[i])
 	}
 }

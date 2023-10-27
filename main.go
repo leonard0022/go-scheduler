@@ -74,8 +74,8 @@ var (
 		{"U13 B", "U13.*B", "U13 B -> U11 A-C, U13 B-C", "U13.*[B-C]|U11.*[A-C]"},
 		{"U13 C", "U13.*C", "U13 C -> U11 A-C, U13 B-C", "U13.*[B-C]|U11.*[A-C]"},
 		// U15
-		{"U15 A", "U15.*A", "U15 A -> U13 A, U15 A-B, U18 A-B", "U13A|U15.*[A-B]|U18.*[A-B]"},
-		{"U15 B", "U15.*B", "U15 B -> U13 A, U15 A-B, U18 A-B", "U13A|U15.*[A-B]|U18.*[A-B]"},
+		{"U15 A", "U15.*A", "U15 A -> U13 A, U15 A-B, U18 A-B", "U13.*A|U15.*[A-B]|U18.*[A-B]"},
+		{"U15 B", "U15.*B", "U15 B -> U13 A, U15 A-B, U18 A-B", "U13.*A|U15.*[A-B]|U18.*[A-B]"},
 		// U18
 		{"U18 A", "U18.*A", "U18 A -> U15 A-B, U18 A-B", "U15.*[A-B]|U18.*[A-B]"},
 		{"U18 B", "U18.*B", "U18 B -> U15 A-B, U18 A-B", "U15.*[A-B]|U18.*[A-B]"},
@@ -148,15 +148,21 @@ func addUnique(list []string, str string) []string {
 }
 
 func main() {
-	// location to download schedule to
-	schedule := "./schedule.csv"
+	schedule := "./schedule.csv" // location to download schedule to
 
 	// Download schedule
-	// TODO clean up downloaded file when done
-	err := downloadSchedule(schedule)
-	if err != nil {
-		log.Fatal(err)
+	if err := downloadSchedule(schedule); err != nil {
+		log.Panic(err)
 	}
+
+	// Open file to write possible game swaps to
+	// TODO pull the file name from the game to be swapped
+	swap_options := "./swaps.csv" // file containing possible swaps
+	fo, err := os.Create(swap_options)
+	if err != nil {
+		log.Panic(err)
+	}
+	defer fo.Close()
 
 	// Get team division from user
 	fmt.Println("Select your division: ")
@@ -173,7 +179,7 @@ func main() {
 	}
 	division := divisions[dIdx]
 	fmt.Println("Your division: ", division.name)
-	fmt.Println("Your potential swaps: ", division.swaps)
+	fmt.Println("Searching for swaps with the following divisions: \n  ", division.swaps)
 
 	// Get the dates of the game swap
 	// TODO validate the date format the user entered
@@ -185,28 +191,56 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Your date: ", date)
+	// debug statement
+	//fmt.Println("Your date: ", date)
 
 	// open file for reading
-	f, err := os.Open(schedule)
+	fi, err := os.Open(schedule)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer f.Close()
+	defer fi.Close()
 
 	// create a reader to read all lines from CSV file
-	reader := csv.NewReader(f)
+	reader := csv.NewReader(fi)
 
 	// list of potentialMatches from the schedule file
 	var potentialMatches [][]string
+
+	// Constants used to access gameInfo records in the CSV
+	const (
+		DIVISION   = 0
+		GAMEID     = 1
+		DATE       = 2
+		TIME       = 3
+		VENUE      = 4
+		HOMETEAM   = 5
+		AWAYTEAM   = 6
+		GAMESTATUS = 7
+	)
 
 	// used to store the list of team names
 	var teamNames []string // Need? a list to present options to users
 	var teamSchedule = make(map[string]map[string]bool)
 	var teamsToEliminate = make(map[string]bool) // Map is better to do fast lookups and avoid iterating over a list
+
+	// compile regex to check if scores entered
+	// TODO check error code
+	skipRe, err := regexp.Compile(`.*\([0-9]+\).*`)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// compile regex to check if division is acceptable for swaps
+	// TODO check error code
+	divRe, err := regexp.Compile(division.nameRegex)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	for line := 1; ; line++ {
-		// read each record from the file
-		record, err := reader.Read()
+		// read each gameInfo from the file
+		gameInfo, err := reader.Read()
 		if err == io.EOF {
 			break
 		}
@@ -230,7 +264,7 @@ func main() {
 		// games with scores because early season schedules may not have
 		// unplayed games for all teams. This maximizes the chances that all
 		// teams will be found.
-		result, err = regexp.MatchString(division.nameRegex, record[0])
+		result, err := regexp.MatchString(division.nameRegex, gameInfo[DIVISION])
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -242,7 +276,7 @@ func main() {
 				if teamSchedule[record[i]] == nil {
 					teamSchedule[record[i]] = make(map[string]bool)
 				}
-				teamSchedule[record[i]][record[2]] = true
+				teamSchedule[gameInfo[i]][gameInfo[GAMEID]] = true
 			}
 		}
 
@@ -253,20 +287,20 @@ func main() {
 		}
 		if result {
 			//fmt.Println(line, "match: ", record)
-			potentialMatches = append(potentialMatches, record)
+			potentialMatches = append(potentialMatches, gameInfo)
 		}
 
 		// Create a list of all teams playing on the date to be swapped
 		// These teams will be eliminated from potential matches
-		result, err = regexp.MatchString(date, record[2])
+		result, err = regexp.MatchString(date, gameInfo[DATE])
 		if err != nil {
 			log.Fatal(err)
 		}
 		if result {
 			//fmt.Println(line, "eliminate team: ", record[5])
 			//fmt.Println(line, "eliminate team: ", record[6])
-			teamsToEliminate[record[5]] = true
-			teamsToEliminate[record[6]] = true
+			teamsToEliminate[gameInfo[HOMETEAM]] = true
+			teamsToEliminate[gameInfo[AWAYTEAM]] = true
 		}
 	}
 
@@ -283,10 +317,10 @@ func main() {
 		log.Fatal(err)
 	}
 	team := teamNames[tIdx]
-	fmt.Print("Enter the number > ")
 	fmt.Println("Your team: ", team)
 
-	fmt.Println("Schedule:", teamSchedule[team])
+	// debug statement
+	//fmt.Println("Schedule:", teamSchedule[team])
 	var matches [][]string
 
 	// TODO eliminate dates when you are already playing
@@ -321,6 +355,9 @@ func main() {
 
 		// No reason found to eliminate the game, add it to matches
 		fmt.Println(strings.Join(potentialMatches[i], ","))
+		if _, err := fo.WriteString(strings.Join(potentialMatches[i], ",") + "\n"); err != nil {
+			log.Panic(err)
+		}
 
 		matches = append(matches, potentialMatches[i])
 	}

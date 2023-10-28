@@ -225,14 +225,12 @@ func main() {
 	var teamsToEliminate = make(map[string]bool) // Map is better to do fast lookups and avoid iterating over a list
 
 	// compile regex to check if scores entered
-	// TODO check error code
 	skipRe, err := regexp.Compile(`.*\([0-9]+\).*`)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// compile regex to check if division is acceptable for swaps
-	// TODO check error code
 	divRe, err := regexp.Compile(division.nameRegex)
 	if err != nil {
 		log.Fatal(err)
@@ -250,12 +248,12 @@ func main() {
 
 		// Skip any games that already have a score entered
 		// Example: GLOUCESTER CENTRE COUGARS U15B1 (3)
-		result, err := regexp.MatchString(`.*\([0-9]+\).*`, record[6])
+		result, err := regexp.MatchString(`.*\([0-9]+\).*`, gameInfo[AWAYTEAM])
 		if err != nil {
 			log.Fatal(err)
 		}
 		if result {
-			//log.Println(line, "skipping: ", record)
+			//log.Println(line, "skipping: ", gameInfo)
 			continue
 		}
 
@@ -264,29 +262,29 @@ func main() {
 		// games with scores because early season schedules may not have
 		// unplayed games for all teams. This maximizes the chances that all
 		// teams will be found.
-		result, err := regexp.MatchString(division.nameRegex, gameInfo[DIVISION])
+		result, err = regexp.MatchString(division.nameRegex, gameInfo[DIVISION])
 		if err != nil {
 			log.Fatal(err)
 		}
 		if result {
-			//fmt.Println(line, "add division team :", record[5])
-			//fmt.Println(line, "add division team :", record[6])
+			//fmt.Println(line, "add division team :", gameInfo[5])
+			//fmt.Println(line, "add division team :", gameInfo[6])
 			for i := 5; i <= 6; i++ {
-				teamNames = addUnique(teamNames, record[i])
-				if teamSchedule[record[i]] == nil {
-					teamSchedule[record[i]] = make(map[string]bool)
+				teamNames = addUnique(teamNames, gameInfo[i])
+				if teamSchedule[gameInfo[i]] == nil {
+					teamSchedule[gameInfo[i]] = make(map[string]bool)
 				}
 				teamSchedule[gameInfo[i]][gameInfo[GAMEID]] = true
 			}
 		}
 
 		// look for games in divisions that satisfy the swap rules
-		result, err = regexp.MatchString(division.swapsRegex, record[0])
+		result, err = regexp.MatchString(division.swapsRegex, gameInfo[DIVISION])
 		if err != nil {
 			log.Fatal(err)
 		}
 		if result {
-			//fmt.Println(line, "match: ", record)
+			//fmt.Println(line, "match: ", gameInfo)
 			potentialMatches = append(potentialMatches, gameInfo)
 		}
 
@@ -297,8 +295,8 @@ func main() {
 			log.Fatal(err)
 		}
 		if result {
-			//fmt.Println(line, "eliminate team: ", record[5])
-			//fmt.Println(line, "eliminate team: ", record[6])
+			//fmt.Println(line, "eliminate team: ", gameInfo[5])
+			//fmt.Println(line, "eliminate team: ", gameInfo[6])
 			teamsToEliminate[gameInfo[HOMETEAM]] = true
 			teamsToEliminate[gameInfo[AWAYTEAM]] = true
 		}

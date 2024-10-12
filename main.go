@@ -179,7 +179,7 @@ func main() {
 
 	schedule := "./schedule.csv" // location to download schedule to
 
-	cutOffDate := time.Now().AddDate(0, 0, 7)
+	cutOffDate := time.Now().AddDate(0, 0, 10)
 
 	// Download schedule
 	if err := downloadSchedule(schedule); err != nil {

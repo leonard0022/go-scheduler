@@ -12,11 +12,10 @@
 package main
 
 import (
+	"bufio"
 	"encoding/csv"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"regexp"
 	"slices"
@@ -63,7 +62,7 @@ type swap_t struct {
 	away         string     // teams needing a swap
 	excludeTeams []string   // list of team already playing on swap date
 	excludeDates []string   // list of dates swap game teams are playing on
-	matches      [][]string // list of potentialMatches from the schedule file
+	games        [][]string // list of potentialMatches from the schedule file
 }
 type division_type struct {
 	name       string // name of the division
@@ -123,6 +122,7 @@ website. To get the URL (Note: done with Firefox)
  7. In Developer Tools right click the new File value
  8. Select Copy Value / Copy URL
 */
+/*
 func downloadSchedule(filepath string) (err error) {
 	// url to the full schedule
 	var url string = "https://ttmwebservices.ca/schedules/index.php?" +
@@ -151,6 +151,7 @@ func downloadSchedule(filepath string) (err error) {
 
 	return nil
 }
+*/
 
 /*
 Normalize everything to uppercase. Check to see if the string is already in
@@ -174,34 +175,39 @@ func addUnique(list []string, str string) []string {
 	return list
 }
 
-func main() {
-	var swap swap_t // structure to track data for swaps
-
-	schedule := "./schedule.csv" // location to download schedule to
-
-	cutOffDate := time.Now().AddDate(0, 0, 10)
-
-	// Download schedule
-	if err := downloadSchedule(schedule); err != nil {
-		log.Panic(err)
-	}
-
-	// Get team division from user
-	// TODO extract from schedule based on GameId to swap
-	fmt.Println("Select your division: ")
-	dIdx := 0
-	for _, k := range divisions {
-		fmt.Printf(" %2d - %s\n", dIdx, k.name)
-		dIdx++
-	}
-	fmt.Print("Enter the number > ")
-	_, err := fmt.Scanln(&dIdx)
+func promptWithDefault(prompt string, def string) string {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("%s (press enter for default: '%s'): ", prompt, def)
+	input, err := reader.ReadString('\n')
 	if err != nil {
 		log.Fatal(err)
 	}
-	division := divisions[dIdx]
-	fmt.Println("Your division: ", division.name)
-	fmt.Println("Searching for swaps with the following divisions: \n  ", division.swaps)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		input = def
+	}
+	return input
+}
+
+func main() {
+	var swap swap_t // structure to track data for swaps
+
+	// TODO prompt user for file name
+	schedule := promptWithDefault("Input file", "./schedule.csv") // location to download schedule to
+
+	// open file for reading
+	fi, err := os.Open(schedule)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer fi.Close()
+
+	// Set the cut off date for games to be considered
+	// This is today + 10 days
+	// Any games on or before this date will be ignored
+	cutOffDate := time.Now().AddDate(0, 0, 10)
+
+	// TODO implement new method to auto download the schedule
 
 	// Get the game id
 	// This is use to find the two teams that are playing. Team names will be
@@ -211,96 +217,121 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// open file for reading
-	fi, err := os.Open(schedule)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer fi.Close()
-
 	// create a reader to read all lines from CSV file
 	reader := csv.NewReader(fi)
 
+	// Read all the records into memory
+	swap.games, err = reader.ReadAll()
+	if err != nil {
+		log.Fatal(err)
+	}
+	//fmt.Printf("Lines: %d\n", len(swap.matches))
+
+	// Use the game id to find the division and teams needing a swap
+	// This will be used to find the dates and teams to exclude
+	// when searching for potential matches
+	var division division_type
+	for _, game := range swap.games {
+		if game[GAMEID] == swap.gameId {
+			// Game was found, extract the information
+			// TODO - delete debug statement
+			// fmt.Printf("Found game %s on line %d\n", swap.gameId, i)
+			swap.date = game[DATE]
+			swap.home = game[HOMETEAM]
+			swap.away = game[AWAYTEAM]
+			fmt.Println("Game date: ", swap.date)
+			fmt.Println("Home team: ", swap.home)
+			fmt.Println("Away team: ", swap.away)
+
+			// Selec the right division by matching the regex with the division
+			// name from the game
+			for _, division = range divisions {
+				matched, err := regexp.MatchString(division.nameRegex, game[DIVISION])
+				if err != nil {
+					log.Fatal(err)
+				}
+				if matched {
+					fmt.Println("Your division: ", division.name)
+					fmt.Println("Searching for swaps with the following divisions: ", division.swaps)
+					break
+				}
+			}
+
+			// Check that the game date is not before the cut off date
+			// If it is then there is no point in continuing
+			gameDate, err := time.Parse(DATE_FORMAT, swap.date)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if gameDate.Before(cutOffDate) {
+				fmt.Println("Game date is before cut off date of ", cutOffDate.Format(DATE_FORMAT))
+				fmt.Println("No point in continuing")
+				return
+			}
+
+			// Exit the loop as the game has been found
+			break
+		}
+	}
 	// compile regex to check if division is acceptable for swaps
 	swappableRe, err := regexp.Compile(division.swapsRegex)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Read all the records into memory
-	swap.matches, err = reader.ReadAll()
-	if err != nil {
-		log.Fatal(err)
-	}
-	//fmt.Printf("Lines: %d\n", len(swap.matches))
-
 	// Delete games that
 	//  - occur in the past
 	//  - don't match the swappable divisions
-	swap.matches = slices.DeleteFunc(swap.matches, func(g []string) bool {
-		gameDate, err := time.Parse(DATE_FORMAT, g[DATE])
+	swap.games = slices.DeleteFunc(swap.games, func(game []string) bool {
+		gameDate, err := time.Parse(DATE_FORMAT, game[DATE])
 		if err != nil {
 			// probably here because the first line is a header
-			//fmt.Println(g) // TODO - delete debug statement
+			//fmt.Println(game) // TODO - delete debug statement
 			return true
 		}
 		if gameDate.Before(cutOffDate) {
 			// delete any games in the past or 7 days from today
-			//fmt.Println(g) // TODO - delete debug statement
+			//fmt.Println(game, " << before cutoff date") // TODO - delete debug statement
 			return true
 		}
-		if !swappableRe.MatchString(g[DIVISION]) {
+		if !swappableRe.MatchString(game[DIVISION]) {
 			// delete if can't swap with the division
-			//fmt.Println(g) // TODO - delete debug statement
+			//fmt.Println(game, " << wrong division") // TODO - delete debug statement
 			return true
 		}
 		return false
 	})
 	//fmt.Printf("Lines: %d\n", len(swap.matches))
 
-	// Parse the slice for information about teams in your division
-	for _, g := range swap.matches {
-		// Get info about game swap
-		// 1. teams involved in swap - eliminate dates this teams are playing
-		// 2. date of swap - eliminate teams already playing this day
-		if swap.gameId == g[GAMEID] {
-			fmt.Println(g[HOMETEAM])
-			fmt.Println(g[AWAYTEAM])
-			swap.home = g[HOMETEAM]
-			swap.away = g[AWAYTEAM]
-			swap.date = g[DATE]
-			break
-		}
-	}
-
 	// Build lists of dates and teams to exclude from potential matches
 	// 1. dates when the teams in the swaps are playing
 	// 2. teams that are already playing on the swap date
-	for _, g := range swap.matches {
-		if slices.Contains(g, swap.home) || slices.Contains(g, swap.away) {
-			swap.excludeDates = append(swap.excludeDates, g[DATE])
+	for _, game := range swap.games {
+		if slices.Contains(game, swap.home) || slices.Contains(game, swap.away) {
+			swap.excludeDates = append(swap.excludeDates, game[DATE])
+			//fmt.Println(game, " << swapping team")
 		}
 
 		// Get the names of all teams already playing on the day of the
 		// swap game. All these teams can be dropped as potential matches
-		if swap.date == g[DATE] {
-			swap.excludeTeams = addUnique(swap.excludeTeams, g[HOMETEAM])
-			swap.excludeTeams = addUnique(swap.excludeTeams, g[AWAYTEAM])
+		if swap.date == game[DATE] {
+			fmt.Println(game, " << playing on swap date")
+			swap.excludeTeams = addUnique(swap.excludeTeams, game[HOMETEAM])
+			swap.excludeTeams = addUnique(swap.excludeTeams, game[AWAYTEAM])
 		}
 	}
 
 	// Remove any games
 	// 1. for dates where the teams needing a swap are playing
 	// 2. involving other teams playing on the day of the swap
-	swap.matches = slices.DeleteFunc(swap.matches, func(g []string) bool {
-		if slices.Contains(swap.excludeDates, g[DATE]) {
+	swap.games = slices.DeleteFunc(swap.games, func(game []string) bool {
+		if slices.Contains(swap.excludeDates, game[DATE]) {
 			return true
 		}
-		if slices.Contains(swap.excludeTeams, g[HOMETEAM]) {
+		if slices.Contains(swap.excludeTeams, game[HOMETEAM]) {
 			return true
 		}
-		if slices.Contains(swap.excludeTeams, g[AWAYTEAM]) {
+		if slices.Contains(swap.excludeTeams, game[AWAYTEAM]) {
 			return true
 		}
 		return false
@@ -314,14 +345,14 @@ func main() {
 	}
 	defer fo.Close()
 
-	for _, g := range swap.matches {
+	for _, g := range swap.games {
 		fmt.Println(strings.Join(g, ","))
 		if _, e := fo.WriteString(strings.Join(g, ",") + "\n"); e != nil {
 			log.Panic(e)
 		}
 	}
 
-	fmt.Printf("Recorded %d potential matches to %s\n", len(swap.matches),
+	fmt.Printf("Recorded %d potential matches to %s\n", len(swap.games),
 		swap.gameId+".csv")
 
 	fmt.Println("Press enter to contine")

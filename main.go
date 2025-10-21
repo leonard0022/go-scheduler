@@ -1,18 +1,15 @@
 /*
   Package for finding game swaps.
 
-  TODO Find out how to have a debug flag and debug statements
   TODO Add graphical interface
   TODO Add header to output CSV file
   TODO Convert CSV to Excel file
-  TODO Move to Google cloud
   TODO Prompt for other teams to exclude (i.e. declined due to tournaments)
 */
 
 package main
 
 import (
-	"bufio"
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
@@ -25,6 +22,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/GeoffreyPlitt/debuggo"
 )
 
 /*
@@ -59,6 +58,7 @@ import (
   U15 A-B <-> U18 A-B
 */
 
+// Structure to hold swap information
 type swap_t struct {
 	date         string     // date of the game to swap
 	gameId       string     // game id
@@ -68,6 +68,8 @@ type swap_t struct {
 	excludeDates []string   // list of dates swap game teams are playing on
 	games        [][]string // list of potentialMatches from the schedule file
 }
+
+// Structure to hold information about divisions
 type division_type struct {
 	name       string // name of the division
 	nameRegex  string // regex for matching division
@@ -75,11 +77,14 @@ type division_type struct {
 	swapsRegex string // regular expression for finding swaps
 }
 
+// Structure to hold TTM API response
 type TTMResponseStruct struct {
 	ID   int    `json:"id"`
-	Data string `json:"data"` // This field contains a JSON string
+	Data string `json:"data"` // This field is a Base64 encoded JSON string
 }
 
+// Structure to hold TTM Schedule Records
+// Used to unmarshal the decoded JSON data
 type TTMScheduleRecord struct {
 	ID       string `json:"id"`
 	GameID   string `json:"gameID"`
@@ -91,6 +96,7 @@ type TTMScheduleRecord struct {
 	AwayTeam string `json:"awayTeam"`
 }
 
+// Global variables
 var (
 	// Contains division names and rules for swapping games
 	divisions = []division_type{
@@ -144,18 +150,15 @@ website. To get the URL (Note: done with Firefox)
 */
 
 func downloadSchedule(filepath string) (err error) {
+	// create a debugger object
+	var debug = debuggo.Debug("downloadSchedule")
+
 	var url string = "https://api.off-iceoffice.ca/ooAPI/v1/schedules/" +
 		"games/?orgID=1567976101-7023700001&option1=88&" +
 		"option2=9999&option3=2"
 
-	// Create the file
-	out, err := os.Create(filepath)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
 	// Get the data
+	debug("Downloading schedule from %s", url)
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
@@ -163,6 +166,7 @@ func downloadSchedule(filepath string) (err error) {
 	defer resp.Body.Close()
 
 	// Read the response body
+	debug("Extract base64 encoded data from response")
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatalf("Error reading response body: %v", err)
@@ -179,6 +183,7 @@ func downloadSchedule(filepath string) (err error) {
 	base64EncodedString := string(ttm_shell.Data)
 
 	// Decode the Base64 data
+	debug("Decoding Base64 encoded data")
 	decodedBytes, err := base64.StdEncoding.DecodeString(base64EncodedString)
 	if err != nil {
 		log.Fatalf("Error decoding Base64 string: %v", err)
@@ -193,6 +198,7 @@ func downloadSchedule(filepath string) (err error) {
 
 	// Write the 'scheduleRecords' variable, which is an array (slice) of structs, to file as a CSV.
 	// We'll open a file for writing, create a csv.Writer, and write a header plus all games.
+	debug("Creating file: %s", filepath)
 	csvFile, err := os.Create(filepath)
 	if err != nil {
 		log.Fatal("Could not create CSV file:", err)
@@ -203,6 +209,7 @@ func downloadSchedule(filepath string) (err error) {
 	defer writer.Flush()
 
 	// Write header row
+	debug("Writing schedule to CSV file")
 	err = writer.Write([]string{"Division", "GameID", "Date", "Time", "Arena", "Home Team", "Away Team"})
 	if err != nil {
 		log.Fatal("Could not write CSV header:", err)
@@ -223,14 +230,6 @@ func downloadSchedule(filepath string) (err error) {
 			log.Fatal("Could not write game to CSV:", err)
 		}
 	}
-
-	/*fmt.Println("Test")
-
-	// Writer the body to file
-	_, err = io.Copy(out, resp.Body)
-	if err != nil {
-		return err
-	}*/
 
 	return nil
 }
@@ -257,34 +256,15 @@ func addUnique(list []string, str string) []string {
 	return list
 }
 
-func promptWithDefault(prompt string, def string) string {
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Printf("%s (press enter for default: '%s'): ", prompt, def)
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		log.Fatal(err)
-	}
-	input = strings.TrimSpace(input)
-	if input == "" {
-		input = def
-	}
-	return input
-}
-
 func main() {
-	var swap swap_t // structure to track data for swaps
-	/*
-		// TODO prompt user for file name
-		schedule := promptWithDefault("Input file", "./schedule.csv") // location to download schedule to
+	// create a debugger object
+	var debug = debuggo.Debug("main")
 
-		// open file for reading
-		fi, err := os.Open(schedule)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer fi.Close()
-	*/
-	schedule := "./schedule.csv" // location to download schedule to
+	// Structure to hold swap information
+	var swap swap_t
+
+	// location to download schedule to
+	schedule := "./schedule.csv"
 
 	// Set the cut off date for games to be considered
 	// This is today + 10 days
@@ -297,6 +277,7 @@ func main() {
 	}
 
 	// open file for reading
+	debug("Opening schedule file: %s", schedule)
 	fi, err := os.Open(schedule)
 	if err != nil {
 		log.Fatal(err)
@@ -315,21 +296,20 @@ func main() {
 	reader := csv.NewReader(fi)
 
 	// Read all the records into memory
+	debug("Reading schedule file into memory")
 	swap.games, err = reader.ReadAll()
 	if err != nil {
 		log.Fatal(err)
 	}
-	//fmt.Printf("Lines: %d\n", len(swap.matches))
 
 	// Use the game id to find the division and teams needing a swap
 	// This will be used to find the dates and teams to exclude
 	// when searching for potential matches
 	var division division_type
-	for _, game := range swap.games {
+	for line, game := range swap.games {
 		if game[GAMEID] == swap.gameId {
 			// Game was found, extract the information
-			// TODO - delete debug statement
-			// fmt.Printf("Found game %s on line %d\n", swap.gameId, i)
+			debug("Found game %s on line %d\n", swap.gameId, line)
 			swap.date = game[DATE]
 			swap.home = game[HOMETEAM]
 			swap.away = game[AWAYTEAM]
@@ -380,17 +360,17 @@ func main() {
 		gameDate, err := time.Parse(DATE_FORMAT, game[DATE])
 		if err != nil {
 			// probably here because the first line is a header
-			//fmt.Println(game) // TODO - delete debug statement
+			debug(strings.Join(game, ","))
 			return true
 		}
 		if gameDate.Before(cutOffDate) {
 			// delete any games in the past or 7 days from today
-			//fmt.Println(game, " << before cutoff date") // TODO - delete debug statement
+			debug(strings.Join(game, ","), " << before cutoff date")
 			return true
 		}
 		if !swappableRe.MatchString(game[DIVISION]) {
 			// delete if can't swap with the division
-			//fmt.Println(game, " << wrong division") // TODO - delete debug statement
+			debug(strings.Join(game, ","), " << wrong division")
 			return true
 		}
 		return false
@@ -403,13 +383,13 @@ func main() {
 	for _, game := range swap.games {
 		if slices.Contains(game, swap.home) || slices.Contains(game, swap.away) {
 			swap.excludeDates = append(swap.excludeDates, game[DATE])
-			//fmt.Println(game, " << swapping team")
+			debug(strings.Join(game, ","), " << swapping team")
 		}
 
 		// Get the names of all teams already playing on the day of the
 		// swap game. All these teams can be dropped as potential matches
 		if swap.date == game[DATE] {
-			fmt.Println(game, " << playing on swap date")
+			debug(strings.Join(game, ","), " << playing on swap date")
 			swap.excludeTeams = addUnique(swap.excludeTeams, game[HOMETEAM])
 			swap.excludeTeams = addUnique(swap.excludeTeams, game[AWAYTEAM])
 		}
@@ -430,9 +410,9 @@ func main() {
 		}
 		return false
 	})
-	//fmt.Printf("Lines: %d\n", len(swap.matches))
 
 	// Open file to write possible game swaps to
+	debug("Creating output file: %s", swap.gameId+".csv")
 	fo, err := os.Create(swap.gameId + ".csv")
 	if err != nil {
 		log.Panic(err)

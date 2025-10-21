@@ -13,9 +13,13 @@ package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"regexp"
 	"slices"
@@ -71,6 +75,22 @@ type division_type struct {
 	swapsRegex string // regular expression for finding swaps
 }
 
+type TTMResponseStruct struct {
+	ID   int    `json:"id"`
+	Data string `json:"data"` // This field contains a JSON string
+}
+
+type TTMScheduleRecord struct {
+	ID       string `json:"id"`
+	GameID   string `json:"gameID"`
+	GameDate string `json:"gameDate"`
+	GameTime string `json:"gameTime"`
+	Venue    string `json:"venue"`
+	Division string `json:"division"`
+	HomeTeam string `json:"homeTeam"`
+	AwayTeam string `json:"awayTeam"`
+}
+
 var (
 	// Contains division names and rules for swapping games
 	divisions = []division_type{
@@ -122,12 +142,11 @@ website. To get the URL (Note: done with Firefox)
  7. In Developer Tools right click the new File value
  8. Select Copy Value / Copy URL
 */
-/*
+
 func downloadSchedule(filepath string) (err error) {
-	// url to the full schedule
-	var url string = "https://ttmwebservices.ca/schedules/index.php?" +
-		"pgid=dnl-11-010&dtype=CSV&AID=HEO&JID=district9&" +
-		"pcode=15679761017023700001&ddtype=&stype=2&atype="
+	var url string = "https://api.off-iceoffice.ca/ooAPI/v1/schedules/" +
+		"games/?orgID=1567976101-7023700001&option1=88&" +
+		"option2=9999&option3=2"
 
 	// Create the file
 	out, err := os.Create(filepath)
@@ -143,15 +162,78 @@ func downloadSchedule(filepath string) (err error) {
 	}
 	defer resp.Body.Close()
 
+	// Read the response body
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalf("Error reading response body: %v", err)
+	}
+
+	var ttm_shell TTMResponseStruct
+	err = json.Unmarshal([]byte(bodyBytes), &ttm_shell)
+	if err != nil {
+		fmt.Println("Error unmarshalling TTM Response Struct:", err)
+		return
+	}
+
+	// Convert the byte slice to a string if the body is expected to be a Base64 string
+	base64EncodedString := string(ttm_shell.Data)
+
+	// Decode the Base64 data
+	decodedBytes, err := base64.StdEncoding.DecodeString(base64EncodedString)
+	if err != nil {
+		log.Fatalf("Error decoding Base64 string: %v", err)
+	}
+
+	var scheduleRecords []TTMScheduleRecord
+	err = json.Unmarshal(decodedBytes, &scheduleRecords)
+	if err != nil {
+		fmt.Println("Error decoding the schedule rows", err)
+		return
+	}
+
+	// Write the 'scheduleRecords' variable, which is an array (slice) of structs, to file as a CSV.
+	// We'll open a file for writing, create a csv.Writer, and write a header plus all games.
+	csvFile, err := os.Create(filepath)
+	if err != nil {
+		log.Fatal("Could not create CSV file:", err)
+	}
+	defer csvFile.Close()
+
+	writer := csv.NewWriter(csvFile)
+	defer writer.Flush()
+
+	// Write header row
+	err = writer.Write([]string{"Division", "GameID", "Date", "Time", "Arena", "Home Team", "Away Team"})
+	if err != nil {
+		log.Fatal("Could not write CSV header:", err)
+	}
+
+	// Write each game as a CSV row
+	for _, g := range scheduleRecords {
+		err := writer.Write([]string{
+			g.Division,
+			g.GameID,
+			g.GameDate,
+			g.GameTime,
+			g.Venue,
+			g.HomeTeam,
+			g.AwayTeam,
+		})
+		if err != nil {
+			log.Fatal("Could not write game to CSV:", err)
+		}
+	}
+
+	/*fmt.Println("Test")
+
 	// Writer the body to file
 	_, err = io.Copy(out, resp.Body)
 	if err != nil {
 		return err
-	}
+	}*/
 
 	return nil
 }
-*/
 
 /*
 Normalize everything to uppercase. Check to see if the string is already in
@@ -191,9 +273,28 @@ func promptWithDefault(prompt string, def string) string {
 
 func main() {
 	var swap swap_t // structure to track data for swaps
+	/*
+		// TODO prompt user for file name
+		schedule := promptWithDefault("Input file", "./schedule.csv") // location to download schedule to
 
-	// TODO prompt user for file name
-	schedule := promptWithDefault("Input file", "./schedule.csv") // location to download schedule to
+		// open file for reading
+		fi, err := os.Open(schedule)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer fi.Close()
+	*/
+	schedule := "./schedule.csv" // location to download schedule to
+
+	// Set the cut off date for games to be considered
+	// This is today + 10 days
+	// Any games on or before this date will be ignored
+	cutOffDate := time.Now().AddDate(0, 0, 10)
+
+	// Auto download the schedule
+	if err := downloadSchedule(schedule); err != nil {
+		log.Panic(err)
+	}
 
 	// open file for reading
 	fi, err := os.Open(schedule)
@@ -201,13 +302,6 @@ func main() {
 		log.Fatal(err)
 	}
 	defer fi.Close()
-
-	// Set the cut off date for games to be considered
-	// This is today + 10 days
-	// Any games on or before this date will be ignored
-	cutOffDate := time.Now().AddDate(0, 0, 10)
-
-	// TODO implement new method to auto download the schedule
 
 	// Get the game id
 	// This is use to find the two teams that are playing. Team names will be

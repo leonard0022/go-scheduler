@@ -1,28 +1,35 @@
 # This workflow will build a golang project
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
 
-name: Go
+name: Build Windows Executable
 
 on:
   push:
-    branches: [ "master" ]
+    branches: 
+      - "master"
   pull_request:
-    branches: [ "master" ]
+    branches:
+      - "master"
 
 jobs:
-
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
-    - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Set up Go
-      uses: actions/setup-go@v3
-      with:
-        go-version: 1.18
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.25.1
 
-    - name: Build
-      run: go build -v ./...
+      - name: Build executable
+        run: |
+          go env -w GOOS=windows GOARCH=amd64
+          go build -o go-sheduler.exe .
 
-    - name: Test
-      run: go test -v ./...
+      -name: Upload executable
+       uses: actions/upload-artifact@v3
+       with:
+         name: go-sheduler-windows
+         path: go-sheduler.exe

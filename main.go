@@ -2,7 +2,6 @@
   Package for finding game swaps.
 
   TODO Add graphical interface
-  TODO Add header to output CSV file
   TODO Convert CSV to Excel file
   TODO Prompt for other teams to exclude (i.e. declined due to tournaments)
 */
@@ -22,7 +21,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
 	"github.com/GeoffreyPlitt/debuggo"
 )
 
@@ -413,15 +411,20 @@ func main() {
 
 	// Open file to write possible game swaps to
 	debug("Creating output file: %s", swap.gameId+".csv")
-	fo, err := os.Create(swap.gameId + ".csv")
+	csvFile, err := os.Create(swap.gameId + ".csv")
 	if err != nil {
 		log.Panic(err)
 	}
-	defer fo.Close()
+	defer csvFile.Close()
+
+	// Write CSV header
+	writer := csv.NewWriter(csvFile)
+	writer.Write([]string{"Division", "Game ID", "Date", "Time", "Arena", "Home Team", "Away Team"})
+	writer.Flush()
 
 	for _, g := range swap.games {
 		fmt.Println(strings.Join(g, ","))
-		if _, e := fo.WriteString(strings.Join(g, ",") + "\n"); e != nil {
+		if _, e := csvFile.WriteString(strings.Join(g, ",") + "\n"); e != nil {
 			log.Panic(e)
 		}
 	}

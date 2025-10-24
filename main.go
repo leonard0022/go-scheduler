@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+
 	"github.com/GeoffreyPlitt/debuggo"
 )
 
@@ -76,7 +77,7 @@ type division_type struct {
 }
 
 // Structure to hold TTM API response
-type TTMResponseStruct struct {
+type TTMResponse struct {
 	ID   int    `json:"id"`
 	Data string `json:"data"` // This field is a Base64 encoded JSON string
 }
@@ -92,6 +93,19 @@ type TTMScheduleRecord struct {
 	Division string `json:"division"`
 	HomeTeam string `json:"homeTeam"`
 	AwayTeam string `json:"awayTeam"`
+}
+   
+// Structure to hold TTM API response for team contacts
+type TTMContacts struct {
+	ID           string `json:"id"`
+	Division     string `json:"divisionName"`
+	Category     string `json:"categoryName"`
+	Team         string `json:"teamName"`
+	Coach        string `json:"coachName"`
+	CoachEmail   string `json:"coachEmail"`
+	Manager      string `json:"managerName"`
+	ManagerEmail string `json:"managerEmail"`
+	Type         string `json:"type"`
 }
 
 // Global variables
@@ -133,6 +147,62 @@ const (
 )
 
 /*
+Fetch team contact information from TTM
+*/
+func teamContacts() map[string]TTMContacts {
+	url := "https://api.off-iceoffice.ca/ooAPI/v1/schedules/teams/?orgID=district9&id=GHA"
+
+	// Get the data from the URL
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Fatalf("Error fetching data: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Extract the response body
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalf("Error reading response body, %v", err)
+	}
+
+	var ttmResponse TTMResponse
+	err = json.Unmarshal(bodyBytes, &ttmResponse)
+	if err != nil {
+		log.Fatalf("Error unmarshaling JSON, %v", err)
+	}
+
+	decodedBytes, err := base64.StdEncoding.DecodeString(ttmResponse.Data)
+	if err != nil {
+		log.Fatalf("Error decoding base64 data, %v", err)
+	}
+
+	jsonFile, err := os.Create("contacts.json")
+	if err != nil {
+		log.Fatalf("Error creating JSON file, %v", err)
+	}
+	defer jsonFile.Close()
+	_, err = jsonFile.Write(decodedBytes)
+	if err != nil {
+		log.Fatalf("Error writing to JSON file, %v", err)
+	}
+
+	var contacts []TTMContacts
+	err = json.Unmarshal(decodedBytes, &contacts)
+	if err != nil {
+		log.Fatalf("Error unmarshaling contacts JSON, %v", err)
+	}
+
+	contactMap := make(map[string]TTMContacts)
+
+	// Write contact data to CSV
+	for _, contact := range contacts {
+		contactMap[contact.Team] = contact
+	}
+
+	return contactMap
+}
+
+/*
 Download GHA Schedule to local
 
 This is used to download the schedule from the Total Team Management
@@ -170,7 +240,7 @@ func downloadSchedule(filepath string) (err error) {
 		log.Fatalf("Error reading response body: %v", err)
 	}
 
-	var ttm_shell TTMResponseStruct
+	var ttm_shell TTMResponse
 	err = json.Unmarshal([]byte(bodyBytes), &ttm_shell)
 	if err != nil {
 		fmt.Println("Error unmarshalling TTM Response Struct:", err)
@@ -300,6 +370,9 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Get the team contacts
+	contacts := teamContacts()
+
 	// Use the game id to find the division and teams needing a swap
 	// This will be used to find the dates and teams to exclude
 	// when searching for potential matches
@@ -419,14 +492,24 @@ func main() {
 
 	// Write CSV header
 	writer := csv.NewWriter(csvFile)
-	writer.Write([]string{"Division", "Game ID", "Date", "Time", "Arena", "Home Team", "Away Team"})
+	writer.Write([]string{"Division", "Game ID", "Date", "Time", "Arena", "Home Team", "Away Team", "Contacts"})
 	writer.Flush()
 
 	for _, g := range swap.games {
+		
+
 		fmt.Println(strings.Join(g, ","))
-		if _, e := csvFile.WriteString(strings.Join(g, ",") + "\n"); e != nil {
-			log.Panic(e)
-		}
+		csvFile.WriteString(strings.Join(g, ","))
+		csvFile.WriteString(strings.Join([]string{",",
+		                      contacts[swap.home].CoachEmail, 
+			                  contacts[swap.home].ManagerEmail,
+			                  contacts[swap.away].CoachEmail,
+							  contacts[swap.away].ManagerEmail,
+							  contacts[g[HOMETEAM]].CoachEmail,
+							  contacts[g[HOMETEAM]].ManagerEmail,
+							  contacts[g[AWAYTEAM]].CoachEmail,
+							  contacts[g[AWAYTEAM]].ManagerEmail}, ";"))
+		csvFile.WriteString("\n")
 	}
 
 	fmt.Printf("Recorded %d potential matches to %s\n", len(swap.games),
